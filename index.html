@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -233,6 +234,7 @@ async function prosesAbsen(jenis) {
     showStatus('Mengirim data absensi...', 'loading');
     const res = await fetch(API_URL, {
       method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ nama, jenis, lat, long, fotoBase64 })
     });
     const result = await res.json();
