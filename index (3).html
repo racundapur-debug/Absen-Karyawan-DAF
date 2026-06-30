@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Absensi Karyawan</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: #f2f4f7;
+    margin: 0;
+    padding: 16px;
+    display: flex;
+    justify-content: center;
+  }
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 20px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+  h1 {
+    font-size: 18px;
+    margin: 0 0 16px;
+    text-align: center;
+    color: #1a1a1a;
+  }
+  label {
+    font-size: 13px;
+    color: #555;
+    display: block;
+    margin-bottom: 6px;
+  }
+  select {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    font-size: 15px;
+    margin-bottom: 14px;
+  }
+  .btn-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  button {
+    flex: 1;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #btnMasuk { background: #2563eb; color: #fff; }
+  #btnPulang { background: #ea580c; color: #fff; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  #status {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    display: none;
+    white-space: pre-line;
+  }
+  .status-ok { background: #dcfce7; color: #166534; display: block !important; }
+  .status-warn { background: #fef3c7; color: #92400e; display: block !important; }
+  .status-error { background: #fee2e2; color: #991b1b; display: block !important; }
+  .status-loading { background: #e0e7ff; color: #3730a3; display: block !important; }
+
+  video, canvas { display: none; }
+  #preview {
+    width: 100%;
+    border-radius: 10px;
+    margin-top: 10px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>📍 Absensi Karyawan</h1>
+
+  <label for="namaSelect">Nama Karyawan</label>
+  <select id="namaSelect">
+    <option value="">Memuat daftar karyawan...</option>
+  </select>
+
+  <div class="btn-group">
+    <button id="btnMasuk">Absen Masuk</button>
+    <button id="btnPulang">Absen Pulang</button>
+  </div>
+
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  <img id="preview" alt="Preview selfie">
+
+  <div id="status"></div>
+</div>
+
+<script>
+// ====== KONFIGURASI ======
+const API_URL = "PASTE_URL_APPS_SCRIPT_KAMU_DI_SINI";
+const OFFICE_LAT = -6.123456;   // ganti sesuai koordinat kantor
+const OFFICE_LONG = 106.789012; // ganti sesuai koordinat kantor
+const MAX_RADIUS = 150; // meter
+
+const namaSelect = document.getElementById('namaSelect');
+const btnMasuk = document.getElementById('btnMasuk');
+const btnPulang = document.getElementById('btnPulang');
+const statusDiv = document.getElementById('status');
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const preview = document.getElementById('preview');
+
+function showStatus(msg, type) {
+  statusDiv.textContent = msg;
+  statusDiv.className = 'status-' + type;
+}
+
+function setButtonsDisabled(disabled) {
+  btnMasuk.disabled = disabled;
+  btnPulang.disabled = disabled;
+}
+
+// ====== Haversine ======
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// ====== Load daftar karyawan dari Apps Script (doGet) ======
+async function loadKaryawan() {
+  try {
+    const res = await fetch(API_URL);
+    const data = await res.json();
+    namaSelect.innerHTML = '<option value="">-- Pilih Nama --</option>';
+    data.forEach(k => {
+      const opt = document.createElement('option');
+      opt.value = k.nama;
+      opt.textContent = k.nama;
+      namaSelect.appendChild(opt);
+    });
+  } catch (err) {
+    namaSelect.innerHTML = '<option value="">Gagal memuat daftar</option>';
+    console.error(err);
+  }
+}
+loadKaryawan();
+
+// ====== Ambil lokasi ======
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Browser tidak mendukung GPS'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve(pos.coords),
+      err => reject(err),
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  });
+}
+
+// ====== Ambil foto selfie ======
+async function captureSelfie() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'user', width: 480, height: 480 }
+  });
+  video.srcObject = stream;
+  video.style.display = 'block';
+  await video.play();
+
+  // tunggu sebentar biar kamera stabil & fokus
+  await new Promise(r => setTimeout(r, 1500));
+
+  canvas.width = 480;
+  canvas.height = 480;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, 480, 480);
+
+  // hentikan kamera
+  stream.getTracks().forEach(track => track.stop());
+  video.style.display = 'none';
+
+  const base64 = canvas.toDataURL('image/jpeg', 0.7); // kompresi kualitas 70%
+  preview.src = base64;
+  preview.style.display = 'block';
+  return base64;
+}
+
+// ====== Proses absen ======
+async function prosesAbsen(jenis) {
+  const nama = namaSelect.value;
+  if (!nama) {
+    showStatus('Silakan pilih nama terlebih dahulu.', 'error');
+    return;
+  }
+  if (API_URL.includes('PASTE_URL')) {
+    showStatus('URL Apps Script belum diisi di kode HTML.', 'error');
+    return;
+  }
+
+  setButtonsDisabled(true);
+
+  try {
+    showStatus('Mengambil lokasi GPS...', 'loading');
+    const coords = await getLocation();
+    const lat = coords.latitude;
+    const long = coords.longitude;
+
+    const jarak = Math.round(getDistance(OFFICE_LAT, OFFICE_LONG, lat, long));
+    if (jarak > MAX_RADIUS) {
+      showStatus(`⚠️ Anda berada ${jarak}m dari kantor (maksimal ${MAX_RADIUS}m).\nTetap lanjutkan? Status akan tercatat "Di Luar Radius".`, 'warn');
+    }
+
+    showStatus('Membuka kamera, silakan hadap ke depan...', 'loading');
+    const fotoBase64 = await captureSelfie();
+
+    showStatus('Mengirim data absensi...', 'loading');
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      body: JSON.stringify({ nama, jenis, lat, long, fotoBase64 })
+    });
+    const result = await res.json();
+
+    if (result.success) {
+      const icon = result.status === 'Valid' ? '✅' : '⚠️';
+      showStatus(`${icon} Absen ${jenis} berhasil!\nNama: ${nama}\nJarak dari kantor: ${result.jarak}m\nStatus: ${result.status}`, result.status === 'Valid' ? 'ok' : 'warn');
+    } else {
+      showStatus('Gagal menyimpan absensi. Coba lagi.', 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    if (err.code === 1) {
+      showStatus('Izin lokasi ditolak. Aktifkan GPS dan izinkan akses lokasi.', 'error');
+    } else if (err.name === 'NotAllowedError') {
+      showStatus('Izin kamera ditolak. Aktifkan akses kamera untuk absen.', 'error');
+    } else {
+      showStatus('Terjadi kesalahan: ' + err.message, 'error');
+    }
+  } finally {
+    setButtonsDisabled(false);
+  }
+}
+
+btnMasuk.addEventListener('click', () => prosesAbsen('Masuk'));
+btnPulang.addEventListener('click', () => prosesAbsen('Pulang'));
+</script>
+
+</body>
+</html>
